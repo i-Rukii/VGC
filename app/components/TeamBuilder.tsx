@@ -1,132 +1,160 @@
 'use client';
 
-import { useState, useCallback, useTransition } from 'react';
+import { useState, useTransition, useEffect } from 'react';
 import {
-  Search, X, Loader2, AlertCircle, Zap, Shield, ChevronRight,
-  Save, CheckCircle,
+  Save, Copy, CheckCircle, Loader2, Pencil, X, Plus,
+  BookOpen, ChevronRight, Clock, Zap, AlertCircle,
 } from 'lucide-react';
+import PokemonSearch from './PokemonSearch';
+import PokemonEditor from './PokemonEditor';
 import { saveTeamAction } from '../actions';
+import { supabase } from '../../lib/supabase';
 import type { TeamSlot, PokemonData, DbTeam } from '../types';
+import {
+  displayName, toShowdownPaste, STAT_LABEL, DEFAULT_EVS, DEFAULT_IVS, totalEVs,
+} from '../types';
 
-// ─── Type colours ──────────────────────────────────────────────────────────
+// ─── Type colours ─────────────────────────────────────────────────────────────
 
-const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
-  fire:     { bg: 'rgba(249,115,22,0.2)',   text: '#f97316' },
-  water:    { bg: 'rgba(59,130,246,0.2)',   text: '#60a5fa' },
-  grass:    { bg: 'rgba(74,222,128,0.2)',   text: '#4ade80' },
-  electric: { bg: 'rgba(250,204,21,0.2)',   text: '#facc15' },
-  psychic:  { bg: 'rgba(236,72,153,0.2)',   text: '#ec4899' },
-  ice:      { bg: 'rgba(103,232,249,0.2)',  text: '#67e8f9' },
-  dragon:   { bg: 'rgba(99,102,241,0.2)',   text: '#818cf8' },
-  dark:     { bg: 'rgba(161,161,170,0.2)',  text: '#a1a1aa' },
-  fairy:    { bg: 'rgba(251,207,232,0.2)',  text: '#fbcfe8' },
-  fighting: { bg: 'rgba(220,38,38,0.2)',    text: '#f87171' },
-  poison:   { bg: 'rgba(168,85,247,0.2)',   text: '#c084fc' },
-  ground:   { bg: 'rgba(180,83,9,0.2)',     text: '#d97706' },
-  flying:   { bg: 'rgba(147,197,253,0.2)',  text: '#93c5fd' },
-  bug:      { bg: 'rgba(132,204,22,0.2)',   text: '#a3e635' },
-  rock:     { bg: 'rgba(120,113,108,0.2)',  text: '#a8a29e' },
-  ghost:    { bg: 'rgba(88,28,135,0.2)',    text: '#a78bfa' },
-  steel:    { bg: 'rgba(148,163,184,0.2)',  text: '#94a3b8' },
-  normal:   { bg: 'rgba(161,161,170,0.15)', text: '#9ca3af' },
+const TYPE_COLORS: Record<string, string> = {
+  fire:'#f97316',water:'#60a5fa',grass:'#4ade80',electric:'#facc15',
+  ice:'#67e8f9',fighting:'#f87171',poison:'#c084fc',ground:'#d97706',
+  flying:'#93c5fd',psychic:'#ec4899',bug:'#a3e635',rock:'#a8a29e',
+  ghost:'#a78bfa',dragon:'#818cf8',dark:'#a1a1aa',steel:'#94a3b8',
+  normal:'#9ca3af',fairy:'#f9a8d4',
 };
 
-const STAT_COLORS: Record<string, string> = {
-  hp:               '#4ade80',
-  attack:           '#f97316',
-  defense:          '#60a5fa',
-  'special-attack': '#c084fc',
-  'special-defense':'#67e8f9',
-  speed:            '#facc15',
-};
-
-const STAT_ABBREV: Record<string, string> = {
-  hp:               'HP',
-  attack:           'ATK',
-  defense:          'DEF',
-  'special-attack': 'SPA',
-  'special-defense':'SPD',
-  speed:            'SPE',
-};
-
-// ─── Small components ──────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function TypeBadge({ type }: { type: string }) {
-  const c = TYPE_COLORS[type] ?? { bg: 'rgba(255,255,255,0.1)', text: '#fff' };
+  const c = TYPE_COLORS[type] ?? '#fff';
   return (
     <span
-      className="text-[10px] font-bold tracking-widest uppercase px-2 py-0.5 rounded-sm"
-      style={{ background: c.bg, color: c.text }}
+      className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-sm"
+      style={{ background: `${c}18`, color: c, border: `1px solid ${c}25` }}
     >
       {type}
     </span>
   );
 }
 
-function StatBar({ name, value }: { name: string; value: number }) {
-  const color = STAT_COLORS[name] ?? '#f97316';
+// ─── Filled slot card ─────────────────────────────────────────────────────────
+
+function FilledSlot({
+  slot, onEdit, onClear,
+}: {
+  slot: TeamSlot; onEdit: () => void; onClear: () => void;
+}) {
+  const p = slot.pokemon!;
+  const evTotal = totalEVs(p.evs);
+  const movesFilled = p.moves.filter(Boolean).length;
+
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-[10px] font-bold text-white/35 w-8 tracking-wider uppercase flex-shrink-0">
-        {STAT_ABBREV[name] ?? name.slice(0, 3).toUpperCase()}
-      </span>
-      <div className="flex-1 h-1.5 rounded-sm bg-white/5 overflow-hidden">
-        <div
-          className="h-full rounded-sm transition-all duration-500"
-          style={{ width: `${Math.min((value / 255) * 100, 100)}%`, background: color, boxShadow: `0 0 6px ${color}60` }}
+    <div
+      className="rounded-sm border border-[#2d2d2d] hover:border-orange-500/25 transition-all overflow-hidden group relative"
+      style={{ background: '#1a1a1b' }}
+    >
+      {/* Orange top line on hover */}
+      <div
+        className="absolute top-0 left-0 right-0 h-px opacity-0 group-hover:opacity-100 transition-opacity"
+        style={{ background: 'linear-gradient(90deg,transparent,rgba(249,115,22,.5),transparent)' }}
+      />
+
+      {/* Sprite + actions row */}
+      <div
+        className="flex items-center justify-between px-3 pt-3"
+        style={{ background: 'radial-gradient(circle at 20% 80%,rgba(249,115,22,.04) 0%,transparent 60%)' }}
+      >
+        <img
+          src={p.sprite} alt={p.name}
+          className="w-14 h-14 object-contain flex-shrink-0"
+          style={{ imageRendering: 'pixelated', filter: 'drop-shadow(0 2px 8px rgba(0,0,0,.5))' }}
         />
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={onEdit}
+            className="w-7 h-7 rounded-sm flex items-center justify-center text-white/40 hover:text-orange-400 hover:bg-orange-500/10 transition-all"
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            onClick={onClear}
+            className="w-7 h-7 rounded-sm flex items-center justify-center text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-all"
+          >
+            <X size={13} />
+          </button>
+        </div>
       </div>
-      <span className="text-[11px] font-bold text-white/60 w-8 text-right flex-shrink-0">{value}</span>
+
+      {/* Info */}
+      <div className="px-3 pb-3 pt-1">
+        <p className="text-xs font-black text-white capitalize mb-1.5 truncate">
+          {displayName(p.name)}
+        </p>
+
+        {/* Types */}
+        <div className="flex gap-1 flex-wrap mb-2">
+          {p.types.map(t => <TypeBadge key={t} type={t} />)}
+          {p.teraType && (
+            <span
+              className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-sm"
+              style={{
+                background: `${TYPE_COLORS[p.teraType.toLowerCase()] ?? '#fff'}10`,
+                color: TYPE_COLORS[p.teraType.toLowerCase()] ?? '#fff',
+                border: `1px dashed ${TYPE_COLORS[p.teraType.toLowerCase()] ?? '#fff'}30`,
+              }}
+            >
+              ◈ {p.teraType}
+            </span>
+          )}
+        </div>
+
+        {/* Item + ability */}
+        <div className="space-y-0.5 mb-2">
+          {p.item && (
+            <p className="text-[10px] text-white/40 truncate">
+              <span className="text-white/20">@ </span>{p.item}
+            </p>
+          )}
+          {p.ability && (
+            <p className="text-[10px] text-white/30 truncate capitalize">{displayName(p.ability)}</p>
+          )}
+        </div>
+
+        {/* Moves */}
+        <div className="space-y-0.5 mb-2">
+          {[0, 1, 2, 3].map(i => (
+            <p key={i} className="text-[10px] truncate" style={{ color: p.moves[i] ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.12)' }}>
+              {p.moves[i] ? `· ${displayName(p.moves[i])}` : '· —'}
+            </p>
+          ))}
+        </div>
+
+        {/* EV bar */}
+        <div>
+          <div className="flex justify-between text-[9px] mb-1">
+            <span className="text-white/20">EVs</span>
+            <span style={{ color: evTotal > 0 ? '#f97316' : 'rgba(255,255,255,0.15)' }}>{evTotal}/510</span>
+          </div>
+          <div className="h-1 rounded-sm bg-white/5 overflow-hidden">
+            <div
+              className="h-full rounded-sm transition-all"
+              style={{ width: `${(evTotal / 510) * 100}%`, background: '#f97316', boxShadow: '0 0 4px rgba(249,115,22,.4)' }}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function FilledSlot({ slot, onRemove }: { slot: TeamSlot; onRemove: () => void }) {
-  const p = slot.pokemon!;
-  return (
-    <div
-      className="rounded-sm border border-[#2d2d2d] hover:border-orange-500/30 transition-all duration-200 overflow-hidden group relative"
-      style={{ background: '#1a1a1b' }}
-    >
-      <div
-        className="absolute top-0 left-0 right-0 h-px opacity-0 group-hover:opacity-100 transition-opacity"
-        style={{ background: 'linear-gradient(90deg, transparent, rgba(249,115,22,0.5), transparent)' }}
-      />
-      <button
-        onClick={onRemove}
-        className="absolute top-2 right-2 z-10 w-6 h-6 rounded-sm flex items-center justify-center bg-red-500/10 text-red-400 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/20"
-      >
-        <X size={12} />
-      </button>
-      <div
-        className="relative flex items-center justify-center pt-4 pb-2"
-        style={{ background: 'radial-gradient(circle at 50% 80%, rgba(249,115,22,0.05) 0%, transparent 70%)' }}
-      >
-        <img
-          src={p.sprite}
-          alt={p.name}
-          className="w-20 h-20 object-contain"
-          style={{ imageRendering: 'pixelated', filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.5))' }}
-        />
-      </div>
-      <div className="px-4 pb-4">
-        <p className="text-sm font-black text-white capitalize tracking-wide mb-2">{p.name}</p>
-        <div className="flex gap-1.5 mb-3">
-          {p.types.map(t => <TypeBadge key={t} type={t} />)}
-        </div>
-        <div className="space-y-1.5">
-          {p.stats.map(s => <StatBar key={s.name} name={s.name} value={s.value} />)}
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Empty slot card ──────────────────────────────────────────────────────────
 
 function EmptySlot({ slotNum, isActive, onClick }: { slotNum: number; isActive: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="rounded-sm border transition-all duration-200 flex flex-col items-center justify-center gap-3 h-64 group"
+      className="rounded-sm border transition-all duration-150 flex flex-col items-center justify-center gap-3 min-h-[200px] group"
       style={{
         background: isActive ? 'rgba(249,115,22,0.04)' : '#1a1a1b',
         borderColor: isActive ? 'rgba(249,115,22,0.4)' : '#2d2d2d',
@@ -134,233 +162,375 @@ function EmptySlot({ slotNum, isActive, onClick }: { slotNum: number; isActive: 
       }}
     >
       <div
-        className="w-12 h-12 rounded-sm flex items-center justify-center transition-all"
+        className="w-10 h-10 rounded-sm flex items-center justify-center transition-all"
         style={{
           background: isActive ? 'rgba(249,115,22,0.12)' : 'rgba(255,255,255,0.03)',
           border: `1px solid ${isActive ? 'rgba(249,115,22,0.3)' : 'rgba(255,255,255,0.06)'}`,
         }}
       >
-        <Zap size={18} style={{ color: isActive ? '#f97316' : 'rgba(255,255,255,0.15)' }} />
+        {isActive
+          ? <Zap size={16} style={{ color: '#f97316' }} />
+          : <Plus size={16} style={{ color: 'rgba(255,255,255,0.15)' }} />
+        }
       </div>
-      <div className="text-center">
-        <p
-          className="text-[11px] font-bold tracking-[0.2em] uppercase"
-          style={{ color: isActive ? 'rgba(249,115,22,0.7)' : 'rgba(255,255,255,0.2)' }}
-        >
-          {isActive ? 'Search Below' : `Slot ${String(slotNum + 1).padStart(2, '0')}`}
-        </p>
-        <p className="text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.15)' }}>
-          {isActive ? '↓ Enter Pokémon name' : 'Click to fill'}
-        </p>
-      </div>
+      <p
+        className="text-[10px] font-bold tracking-[0.2em] uppercase"
+        style={{ color: isActive ? 'rgba(249,115,22,0.7)' : 'rgba(255,255,255,0.2)' }}
+      >
+        {isActive ? 'Search below' : `Slot ${String(slotNum + 1).padStart(2, '0')}`}
+      </p>
     </button>
   );
 }
 
-// ─── Main ──────────────────────────────────────────────────────────────────
+// ─── Saved teams sidebar ──────────────────────────────────────────────────────
 
-const TEAM_NAME = 'My Team'; // single active team; change or make dynamic later
+function SavedTeamsSidebar({
+  onLoad, currentTeamName,
+}: {
+  onLoad: (team: DbTeam) => void; currentTeamName: string;
+}) {
+  const [teams, setTeams] = useState<DbTeam[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase
+      .from('teams')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .then(({ data }) => {
+        setTeams((data as DbTeam[]) ?? []);
+        setLoading(false);
+      });
+  }, []);
+
+  function timeAgo(iso: string) {
+    const diff = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+  }
+
+  return (
+    <div className="w-60 flex-shrink-0 border-l border-[#2d2d2d] flex flex-col" style={{ background: '#0e0e0e' }}>
+      <div className="px-4 py-3 border-b border-[#2d2d2d]">
+        <div className="flex items-center gap-2">
+          <BookOpen size={13} className="text-orange-500" />
+          <span className="text-[10px] text-white/40 tracking-[0.2em] uppercase font-bold">Saved Teams</span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto py-2">
+        {loading && (
+          <div className="flex items-center justify-center gap-2 py-8 text-white/20">
+            <Loader2 size={14} className="animate-spin" />
+            <span className="text-xs">Loading…</span>
+          </div>
+        )}
+
+        {!loading && teams.length === 0 && (
+          <div className="text-center py-8">
+            <p className="text-white/20 text-xs">No saved teams yet</p>
+            <p className="text-white/15 text-[10px] mt-1">Build and save a team first</p>
+          </div>
+        )}
+
+        {teams.map(team => {
+          const filled = (team.pokemon_list ?? []).filter(Boolean);
+          const isCurrent = team.name === currentTeamName;
+          return (
+            <button
+              key={team.id}
+              onClick={() => onLoad(team)}
+              className="w-full text-left px-4 py-3 hover:bg-white/3 transition-colors group border-b border-white/4 last:border-0"
+              style={{ background: isCurrent ? 'rgba(249,115,22,0.05)' : undefined }}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span
+                  className="text-xs font-bold truncate"
+                  style={{ color: isCurrent ? '#f97316' : 'rgba(255,255,255,0.7)' }}
+                >
+                  {team.name}
+                </span>
+                <ChevronRight size={12} className="text-white/15 group-hover:text-orange-400 transition-colors flex-shrink-0" />
+              </div>
+
+              {/* Mini sprites */}
+              <div className="flex gap-1 mb-1.5">
+                {(team.pokemon_list ?? []).map((p, i) =>
+                  p ? (
+                    <img
+                      key={i}
+                      src={p.sprite}
+                      alt={p.name}
+                      className="w-7 h-7 object-contain"
+                      style={{ imageRendering: 'pixelated', filter: 'brightness(0.9)' }}
+                    />
+                  ) : (
+                    <div
+                      key={i}
+                      className="w-7 h-7 rounded-sm border border-dashed border-white/10 flex-shrink-0"
+                    />
+                  )
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <Clock size={9} className="text-white/20" />
+                <span className="text-[9px] text-white/20">{timeAgo(team.updated_at)}</span>
+                <span className="text-[9px] text-white/15 ml-auto">{filled.length}/6</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main TeamBuilder ─────────────────────────────────────────────────────────
+
+const INITIAL_SLOTS: TeamSlot[] = Array.from({ length: 6 }, (_, i) => ({ id: i, pokemon: null }));
 
 interface Props {
   initialTeam: DbTeam | null;
 }
 
 export default function TeamBuilder({ initialTeam }: Props) {
-  // Hydrate from DB or start empty
   const [slots, setSlots] = useState<TeamSlot[]>(() => {
-    if (initialTeam?.slots) {
-      return initialTeam.slots.map((p, i) => ({ id: i, pokemon: p }));
+    if (initialTeam?.pokemon_list) {
+      return initialTeam.pokemon_list.map((p, i) => ({ id: i, pokemon: p }));
     }
-    return Array.from({ length: 6 }, (_, i) => ({ id: i, pokemon: null }));
+    return INITIAL_SLOTS;
   });
 
+  const [teamName, setTeamName]   = useState(initialTeam?.name ?? 'My Team');
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-
-  const [savePending, startSaveTransition] = useTransition();
-  const [saveToast, setSaveToast] = useState<'success' | 'error' | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [editingSlot, setEditingSlot] = useState<number | null>(null);
+  const [showSaved, setShowSaved] = useState(true);
+  const [copied, setCopied]       = useState(false);
+  const [savePending, startSave]  = useTransition();
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const filled = slots.filter(s => s.pokemon).length;
 
-  // ── Fetch from PokeAPI ───────────────────────────────────────────────────
+  // ── Slot interactions ───────────────────────────────────────────────────────
 
-  const searchPokemon = useCallback(async () => {
-    if (!query.trim() || activeSlot === null) return;
-    setLoading(true);
-    setFetchError(null);
-    try {
-      const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${query.trim().toLowerCase()}`);
-      if (!res.ok) throw new Error(`"${query}" not found. Check spelling.`);
-      const data = await res.json();
-      const pokemon: PokemonData = {
-        name: data.name,
-        id: data.id,
-        sprite: data.sprites.other['official-artwork'].front_default ?? data.sprites.front_default,
-        types: data.types.map((t: any) => t.type.name),
-        stats: data.stats.map((s: any) => ({ name: s.stat.name, value: s.base_stat })),
-      };
-      setSlots(prev => prev.map(s => s.id === activeSlot ? { ...s, pokemon } : s));
-      setQuery('');
-      setActiveSlot(null);
-    } catch (e: any) {
-      setFetchError(e.message ?? 'Failed to fetch. Try again.');
-    } finally {
-      setLoading(false);
+  const handleSlotClick = (slotId: number) => {
+    if (slots[slotId].pokemon) {
+      setEditingSlot(slotId);
+    } else {
+      setActiveSlot(slotId);
+      setShowSearch(true);
     }
-  }, [query, activeSlot]);
+  };
 
-  // ── Save team to Supabase ────────────────────────────────────────────────
+  const handleSearchSelect = (pokemon: PokemonData) => {
+    if (activeSlot === null) return;
+    setSlots(prev => prev.map(s => s.id === activeSlot ? { ...s, pokemon } : s));
+    setShowSearch(false);
+    setActiveSlot(null);
+    // Auto-open editor to fill in competitive details
+    setEditingSlot(activeSlot);
+  };
+
+  const handleEditorSave = (updated: PokemonData) => {
+    if (editingSlot === null) return;
+    setSlots(prev => prev.map(s => s.id === editingSlot ? { ...s, pokemon: updated } : s));
+  };
+
+  const clearSlot = (slotId: number) => {
+    setSlots(prev => prev.map(s => s.id === slotId ? { ...s, pokemon: null } : s));
+    if (editingSlot === slotId) setEditingSlot(null);
+  };
+
+  // ── Load saved team ─────────────────────────────────────────────────────────
+
+  const loadTeam = (team: DbTeam) => {
+    setSlots((team.pokemon_list ?? []).map((p, i) => ({ id: i, pokemon: p })));
+    setTeamName(team.name);
+    setEditingSlot(null);
+  };
+
+  // ── Save to Supabase ────────────────────────────────────────────────────────
 
   const handleSave = () => {
-    const pokemonSlots = slots.map(s => s.pokemon);
-    startSaveTransition(async () => {
+    setSaveError(null);
+    startSave(async () => {
       try {
-        await saveTeamAction(TEAM_NAME, pokemonSlots);
-        setSaveToast('success');
-      } catch {
-        setSaveToast('error');
+        await saveTeamAction(teamName, slots.map(s => s.pokemon));
+      } catch (e: any) {
+        setSaveError(e.message ?? 'Save failed');
       }
-      setTimeout(() => setSaveToast(null), 3000);
     });
   };
 
+  // ── Showdown export ─────────────────────────────────────────────────────────
+
+  const handleCopyShowdown = () => {
+    const paste = toShowdownPaste(slots);
+    navigator.clipboard.writeText(paste).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  };
+
+  // ── Editing pokemon ─────────────────────────────────────────────────────────
+
+  const editingPokemon = editingSlot !== null ? slots[editingSlot]?.pokemon : null;
+
   return (
-    <div className="space-y-6">
-      {/* Toast */}
-      {saveToast && (
-        <div
-          className="fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-2.5 rounded-sm text-sm font-medium shadow-lg"
-          style={{
-            background: '#1a1a1b',
-            border: `1px solid ${saveToast === 'success' ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
-            color: saveToast === 'success' ? '#4ade80' : '#f87171',
-          }}
-        >
-          {saveToast === 'success' ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
-          {saveToast === 'success' ? 'Team saved to Supabase ✓' : 'Failed to save — check console'}
+    <div className="flex gap-0 -m-8 min-h-[calc(100vh-3rem)]">
+      {/* ── Main area ──────────────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col p-8 min-w-0">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-black text-white tracking-tight">
+              Team <span className="text-orange-500">Builder</span>
+            </h1>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                value={teamName}
+                onChange={e => setTeamName(e.target.value)}
+                className="bg-transparent text-sm text-white/40 hover:text-white/70 focus:text-white outline-none border-b border-transparent hover:border-white/20 focus:border-orange-500/40 transition-all w-40 pb-0.5"
+              />
+              <span className="text-white/20 text-[10px]">·</span>
+              <span className="text-white/25 text-[10px] tracking-widest">{filled}/6 slots</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Slot indicator pips */}
+            <div className="flex items-center gap-1.5 mr-2">
+              {slots.map((s, i) => (
+                <div
+                  key={i}
+                  className="w-2 h-2 rounded-full transition-all duration-300"
+                  style={{
+                    background: s.pokemon ? '#f97316' : 'rgba(255,255,255,0.08)',
+                    boxShadow: s.pokemon ? '0 0 5px rgba(249,115,22,.6)' : 'none',
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Copy Showdown */}
+            <button
+              onClick={handleCopyShowdown}
+              disabled={filled === 0}
+              className="flex items-center gap-2 px-3 py-2 rounded-sm text-xs font-bold transition-all disabled:opacity-30 border"
+              style={{
+                background: copied ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.04)',
+                color: copied ? '#4ade80' : 'rgba(255,255,255,0.5)',
+                borderColor: copied ? 'rgba(74,222,128,0.3)' : 'rgba(255,255,255,0.1)',
+              }}
+            >
+              {copied ? <CheckCircle size={13} /> : <Copy size={13} />}
+              {copied ? 'Copied!' : 'Copy Showdown'}
+            </button>
+
+            {/* Save */}
+            <button
+              onClick={handleSave}
+              disabled={savePending || filled === 0}
+              className="flex items-center gap-2 px-4 py-2 rounded-sm text-sm font-bold text-white transition-all disabled:opacity-40"
+              style={{ background: '#f97316' }}
+            >
+              {savePending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              {savePending ? 'Saving…' : 'Save Team'}
+            </button>
+
+            {/* Saved teams toggle */}
+            <button
+              onClick={() => setShowSaved(v => !v)}
+              className="flex items-center gap-2 px-3 py-2 rounded-sm text-xs font-bold transition-all border"
+              style={{
+                background: showSaved ? 'rgba(249,115,22,0.1)' : 'rgba(255,255,255,0.04)',
+                color: showSaved ? '#f97316' : 'rgba(255,255,255,0.4)',
+                borderColor: showSaved ? 'rgba(249,115,22,0.3)' : 'rgba(255,255,255,0.1)',
+              }}
+            >
+              <BookOpen size={13} />
+              Teams
+            </button>
+          </div>
         </div>
+
+        {saveError && (
+          <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-sm border border-red-500/20 text-red-400 text-xs"
+            style={{ background: 'rgba(248,113,113,0.06)' }}>
+            <AlertCircle size={13} />
+            {saveError}
+          </div>
+        )}
+
+        {/* ── Team grid ── */}
+        <div className="grid grid-cols-3 gap-4 flex-1">
+          {slots.map(slot =>
+            slot.pokemon ? (
+              <FilledSlot
+                key={slot.id}
+                slot={slot}
+                onEdit={() => handleSlotClick(slot.id)}
+                onClear={() => clearSlot(slot.id)}
+              />
+            ) : (
+              <EmptySlot
+                key={slot.id}
+                slotNum={slot.id}
+                isActive={activeSlot === slot.id}
+                onClick={() => handleSlotClick(slot.id)}
+              />
+            )
+          )}
+        </div>
+
+        {/* ── Type coverage strip ── */}
+        {filled > 0 && (
+          <div
+            className="mt-4 rounded-sm border border-[#2d2d2d] px-4 py-3"
+            style={{ background: '#1a1a1b' }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] text-white/25 tracking-widest uppercase font-medium">Team Type Coverage</p>
+              <p className="text-[10px] text-white/20">{filled} Pokémon</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {Array.from(
+                new Set(slots.filter(s => s.pokemon).flatMap(s => s.pokemon!.types))
+              ).map(type => (
+                <TypeBadge key={type} type={type} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Saved teams sidebar ─────────────────────────────────────────────── */}
+      {showSaved && (
+        <SavedTeamsSidebar onLoad={loadTeam} currentTeamName={teamName} />
       )}
 
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-black text-white tracking-tight">
-            Team <span className="text-orange-500">Builder</span>
-          </h1>
-          <p className="text-white/35 text-sm mt-0.5">
-            Build and analyse your VGC roster
-            {initialTeam && (
-              <span className="ml-2 text-orange-400/60 text-[10px] uppercase tracking-widest font-bold">
-                · Loaded from DB
-              </span>
-            )}
-          </p>
-        </div>
+      {/* ── Search overlay ──────────────────────────────────────────────────── */}
+      {showSearch && (
+        <PokemonSearch
+          onSelect={handleSearchSelect}
+          onClose={() => { setShowSearch(false); setActiveSlot(null); }}
+        />
+      )}
 
-        <div className="flex items-center gap-3">
-          {/* Slot pips */}
-          <div className="flex items-center gap-1.5">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div
-                key={i}
-                className="w-2.5 h-2.5 rounded-full transition-all duration-300"
-                style={{
-                  background: i < filled ? '#f97316' : 'rgba(255,255,255,0.08)',
-                  boxShadow: i < filled ? '0 0 6px rgba(249,115,22,0.6)' : 'none',
-                }}
-              />
-            ))}
-            <span className="text-[11px] text-white/30 ml-1">{filled}/6</span>
-          </div>
-
-          {/* Save button */}
-          <button
-            onClick={handleSave}
-            disabled={savePending || filled === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-sm text-sm font-bold text-white transition-all disabled:opacity-40"
-            style={{ background: '#f97316' }}
-          >
-            {savePending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-            {savePending ? 'Saving…' : 'Save Team'}
-          </button>
-        </div>
-      </div>
-
-      {/* Search bar */}
-      <div className="rounded-sm border border-[#2d2d2d] p-4 backdrop-blur-md" style={{ background: '#1a1a1b' }}>
-        <div className="flex items-center gap-3 mb-3">
-          <Shield size={14} className="text-orange-500 flex-shrink-0" />
-          <span className="text-[11px] text-white/40 tracking-[0.2em] uppercase font-medium">
-            {activeSlot !== null
-              ? `Filling Slot ${String(activeSlot + 1).padStart(2, '0')} — Enter Pokémon name`
-              : 'Select a slot below to begin'}
-          </span>
-        </div>
-        <div className="flex gap-2">
-          <div className="flex-1 relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none" />
-            <input
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') searchPokemon(); }}
-              disabled={activeSlot === null}
-              placeholder={activeSlot !== null ? 'e.g. incineroar, flutter-mane, urshifu-rapid-strike…' : 'Select a slot first…'}
-              className="w-full bg-black/30 border border-white/8 rounded-sm pl-9 pr-4 py-2.5 text-sm text-white placeholder-white/20 outline-none focus:border-orange-500/40 disabled:opacity-40 transition-colors"
-            />
-          </div>
-          <button
-            onClick={searchPokemon}
-            disabled={loading || !query.trim() || activeSlot === null}
-            className="px-5 py-2.5 rounded-sm text-sm font-bold text-white transition-all flex items-center gap-2 disabled:opacity-40"
-            style={{ background: '#f97316' }}
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <ChevronRight size={14} />}
-            {loading ? 'Loading…' : 'Add'}
-          </button>
-        </div>
-        {fetchError && (
-          <div className="mt-2 flex items-center gap-2 text-[12px] text-red-400">
-            <AlertCircle size={12} />
-            <span>{fetchError}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Slots grid */}
-      <div className="grid grid-cols-3 gap-4">
-        {slots.map(slot =>
-          slot.pokemon ? (
-            <FilledSlot
-              key={slot.id}
-              slot={slot}
-              onRemove={() => {
-                setSlots(prev => prev.map(s => s.id === slot.id ? { ...s, pokemon: null } : s));
-                if (activeSlot === slot.id) setActiveSlot(null);
-              }}
-            />
-          ) : (
-            <EmptySlot
-              key={slot.id}
-              slotNum={slot.id}
-              isActive={activeSlot === slot.id}
-              onClick={() => setActiveSlot(slot.id)}
-            />
-          )
-        )}
-      </div>
-
-      {/* Type coverage strip */}
-      {filled > 0 && (
-        <div className="rounded-sm border border-[#2d2d2d] p-4 backdrop-blur-md" style={{ background: '#1a1a1b' }}>
-          <p className="text-[10px] tracking-[0.2em] uppercase text-white/30 font-medium mb-3">Team Type Coverage</p>
-          <div className="flex flex-wrap gap-2">
-            {Array.from(new Set(slots.filter(s => s.pokemon).flatMap(s => s.pokemon!.types))).map(type => (
-              <TypeBadge key={type} type={type} />
-            ))}
-          </div>
-        </div>
+      {/* ── Editor slide-over ───────────────────────────────────────────────── */}
+      {editingPokemon && editingSlot !== null && (
+        <PokemonEditor
+          pokemon={editingPokemon}
+          onSave={handleEditorSave}
+          onClose={() => setEditingSlot(null)}
+        />
       )}
     </div>
   );
