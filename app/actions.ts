@@ -2,7 +2,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createServerClient } from '../../lib/supabase-server';
+import { createServerClient } from '../lib/supabase-server';
 import type { PokemonData, TeamSlot } from './types';
 
 const db = () => createServerClient();
