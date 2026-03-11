@@ -1,3 +1,4 @@
+// ─── UI / Local types ────────────────────────────────────────────────────────
 
 export type Tab = 'dashboard' | 'team-builder' | 'meta-trends' | 'tournaments';
 
@@ -28,8 +29,33 @@ export interface MetaPokemon {
   trend: 'up' | 'down' | 'stable';
 }
 
-export interface Tournament {
-  id: number;
+// ─── Supabase DB row types ────────────────────────────────────────────────────
+
+export interface DbNote {
+  id: string;          // uuid
+  content: string;
+  tag: string;
+  created_at: string;
+}
+
+export interface DbMatch {
+  id: string;          // uuid
+  opponent: string;
+  result: 'W' | 'L';
+  score: string;
+  tournament: string;
+  created_at: string;
+}
+
+export interface DbTeam {
+  id: string;          // uuid
+  name: string;
+  slots: Array<PokemonData | null>;  // jsonb
+  updated_at: string;
+}
+
+export interface DbTournament {
+  id: string;          // uuid
   name: string;
   date: string;
   location: string;
@@ -38,19 +64,14 @@ export interface Tournament {
   status: 'upcoming' | 'ongoing' | 'completed';
   players?: number;
   cp: number;
+  created_at: string;
 }
 
-export interface MatchResult {
-  opponent: string;
-  result: 'W' | 'L';
-  score: string;
-  tournament: string;
-  date: string;
-}
+// ─── Aggregates passed from Server → Client ───────────────────────────────────
 
-export interface Note {
-  id: number;
-  content: string;
-  tag: string;
-  createdAt: string;
+export interface InitialData {
+  notes: DbNote[];
+  matches: DbMatch[];
+  latestTeam: DbTeam | null;
+  tournaments: DbTournament[];
 }
